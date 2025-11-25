@@ -18,6 +18,7 @@ from airbyte_cdk.models import (
     AirbyteStateMessage,
     AirbyteStream,
     ConfiguredAirbyteCatalog,
+    SyncMode,
     Status,
     Type,
 )
@@ -76,8 +77,7 @@ class SourceRfcReadTable(Source):
         logger.debug("ERPL Source Stream Discovery - stream is: %s", technical_name)
         json_schema = self._create_json_schema_for_table(technical_name, con)
 
-        
-        supported_modes = ["full_refresh", "incremental"]
+        supported_modes = [SyncMode.full_refresh, SyncMode.incremental]
         source_defined_cursor = False
         default_cursor = []
 
@@ -90,8 +90,6 @@ class SourceRfcReadTable(Source):
 
         return AirbyteStream(
             name=technical_name,
-            text=text,
-            table_type=table_type,
             json_schema=json_schema,
             supported_sync_modes=supported_modes,
             source_defined_cursor=source_defined_cursor,
@@ -166,7 +164,7 @@ class SourceRfcReadTable(Source):
         raise ValueError(f"Unsupported ERPL field type: {erpl_field_type}")
 
     def read(
-        self, logger: logging.Logger, config: json, catalog: ConfiguredAirbyteCatalog, state: dict[str, any]
+        self, logger: logging.Logger, config: json, catalog: ConfiguredAirbyteCatalog, state: dict[str, Any] | None = None
     ) -> Generator[AirbyteMessage, None, None]:
         """
         :param config: A Mapping of the user input configuration as defined in the connector spec.
@@ -175,6 +173,7 @@ class SourceRfcReadTable(Source):
         :param logger:  logger object
         """
         con = self._create_connection_with_erpl(logger, config)
+        safe_state: dict[str, Any] = state or {}
 
         logger.debug("Starting ERPL Source read for all streams ...")
         for configured_stream in catalog.streams:
@@ -183,7 +182,7 @@ class SourceRfcReadTable(Source):
             cursor_field = configured_stream.cursor_field
 
             # Get the stream state
-            stream_state = state.get(stream.name, {})
+            stream_state = safe_state.get(stream.name, {})
 
             for message in self._read_stream(logger, config, stream, con, stream_state, sync_mode, cursor_field):
                 yield message
@@ -194,8 +193,8 @@ class SourceRfcReadTable(Source):
         config: json,
         stream: AirbyteStream,
         con: duckdb.DuckDBPyConnection,
-        state: dict[str, any],
-        sync_mode: str,
+        state: dict[str, Any],
+        sync_mode: SyncMode | str,
         cursor_field: list[str],
     ) -> Generator[AirbyteMessage, None, None]:
         """
@@ -207,11 +206,19 @@ class SourceRfcReadTable(Source):
         :param state: The user provided state
         :return: A generator of AirbyteMessages
         """
-        logger.debug(f"Starting ERPL Source read for stream: {stream.name}, sync_mode: {sync_mode}, cursor_field: {cursor_field}")
+        state = state or {}
+        sync_mode_value = sync_mode.value if isinstance(sync_mode, SyncMode) else sync_mode
+
+        logger.debug(
+            "Starting ERPL Source read for stream: %s, sync_mode: %s, cursor_field: %s",
+            stream.name,
+            sync_mode_value,
+            cursor_field,
+        )
 
         query = f"SELECT * FROM sap_read_table('{stream.name}')"
 
-        if sync_mode == "incremental" and cursor_field and state.get(cursor_field[0]):
+        if sync_mode_value == "incremental" and cursor_field and state.get(cursor_field[0]):
             last_state_value = state[cursor_field[0]]
             query += f" WHERE {cursor_field[0]} >= '{last_state_value}'"
             logger.info(f"Reading incrementally for {stream.name} with state: {state}")
@@ -223,7 +230,7 @@ class SourceRfcReadTable(Source):
         while row := res.fetchmany():
             msg = self._convert_row_to_message(res.columns, row[0], stream)
 
-            if sync_mode == "incremental" and cursor_field:
+            if sync_mode_value == "incremental" and cursor_field:
                 cursor_value = msg.record.data.get(cursor_field[0])
                 if cursor_value:
                     if max_cursor_value is None or cursor_value > max_cursor_value:
@@ -231,7 +238,7 @@ class SourceRfcReadTable(Source):
 
             yield msg
 
-        if sync_mode == "incremental" and max_cursor_value is not None:
+        if sync_mode_value == "incremental" and max_cursor_value is not None:
             new_state = {cursor_field[0]: max_cursor_value}
             yield AirbyteMessage(
                 type=Type.STATE,

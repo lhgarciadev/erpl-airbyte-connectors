@@ -1,31 +1,14 @@
-# Build stage
-FROM ghcr.io/astral-sh/uv:python3.10-bookworm-slim AS build
+FROM python:3.10-slim-bullseye
 
-WORKDIR /app
+RUN apt-get update && apt-get install -y bash && rm -rf /var/lib/apt/lists/*
 
-# Copy lockfile and project definition
-COPY pyproject.toml uv.lock ./
-
-# Copy source code
+WORKDIR /airbyte/integration_code
 COPY source_sapreadtable ./source_sapreadtable
 COPY main.py ./
+COPY pyproject.toml ./
 COPY README.md ./
 
-# Install dependencies using uv
-# --no-dev ensures dev dependencies are not installed
-# --frozen ensures the lockfile is respected strictly
-RUN uv sync --no-dev --frozen
+RUN pip install .
 
-# Runtime stage
-FROM ghcr.io/astral-sh/uv:python3.10-bookworm-slim
-
-WORKDIR /app
-
-# Copy installed application and virtual environment from the build stage
-COPY --from=build /app /app
-
-# Set the entrypoint to run the Airbyte connector CLI using uv
-ENTRYPOINT ["uv", "run", "source-sapreadtable"]
-
-# No CMD is needed, as Airbyte will append the specific command (spec, check, discover, read)
-# No EXPOSE 8000, as this is a connector, not a web server.
+ENV AIRBYTE_ENTRYPOINT "python /airbyte/integration_code/main.py"
+ENTRYPOINT ["python", "/airbyte/integration_code/main.py"]
