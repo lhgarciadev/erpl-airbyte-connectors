@@ -15,6 +15,7 @@ from airbyte_cdk.models import (
     AirbyteConnectionStatus,
     AirbyteMessage,
     AirbyteRecordMessage,
+    AirbyteStateMessage,
     AirbyteStream,
     ConfiguredAirbyteCatalog,
     Status,
@@ -75,12 +76,26 @@ class SourceRfcReadTable(Source):
         logger.debug("ERPL Source Stream Discovery - stream is: %s", technical_name)
         json_schema = self._create_json_schema_for_table(technical_name, con)
 
+        
+        supported_modes = ["full_refresh", "incremental"]
+        source_defined_cursor = False
+        default_cursor = []
+
+        if "AEDAT" in json_schema.get("properties", {}):
+            source_defined_cursor = True
+            default_cursor = ["AEDAT"]
+            logger.debug(f"Stream {technical_name} has AEDAT, suggesting it as default cursor field.")
+        else:
+            logger.debug(f"Stream {technical_name} does not have AEDAT. User can manually select a cursor field.")
+
         return AirbyteStream(
             name=technical_name,
             text=text,
             table_type=table_type,
             json_schema=json_schema,
-            supported_sync_modes=["full_refresh"],
+            supported_sync_modes=supported_modes,
+            source_defined_cursor=source_defined_cursor,
+            default_cursor_field=default_cursor,
         )
 
     def _create_json_schema_for_table(self, table_name: str, con: duckdb.DuckDBPyConnection) -> Mapping[str, Any]:
@@ -164,7 +179,13 @@ class SourceRfcReadTable(Source):
         logger.debug("Starting ERPL Source read for all streams ...")
         for configured_stream in catalog.streams:
             stream = configured_stream.stream
-            for message in self._read_stream(logger, config, stream, con, state):
+            sync_mode = configured_stream.sync_mode
+            cursor_field = configured_stream.cursor_field
+
+            # Get the stream state
+            stream_state = state.get(stream.name, {})
+
+            for message in self._read_stream(logger, config, stream, con, stream_state, sync_mode, cursor_field):
                 yield message
 
     def _read_stream(
@@ -174,6 +195,8 @@ class SourceRfcReadTable(Source):
         stream: AirbyteStream,
         con: duckdb.DuckDBPyConnection,
         state: dict[str, any],
+        sync_mode: str,
+        cursor_field: list[str],
     ) -> Generator[AirbyteMessage, None, None]:
         """
         Read a stream from ERPL.
@@ -184,12 +207,36 @@ class SourceRfcReadTable(Source):
         :param state: The user provided state
         :return: A generator of AirbyteMessages
         """
-        logger.debug("Starting ERPL Source read for stream: %s", stream.name)
+        logger.debug(f"Starting ERPL Source read for stream: {stream.name}, sync_mode: {sync_mode}, cursor_field: {cursor_field}")
 
-        res = con.sql(f"SELECT * FROM sap_read_table('{stream.name}')")
+        query = f"SELECT * FROM sap_read_table('{stream.name}')"
+
+        if sync_mode == "incremental" and cursor_field and state.get(cursor_field[0]):
+            last_state_value = state[cursor_field[0]]
+            query += f" WHERE {cursor_field[0]} >= '{last_state_value}'"
+            logger.info(f"Reading incrementally for {stream.name} with state: {state}")
+
+        res = con.sql(query)
+
+        max_cursor_value = None
+
         while row := res.fetchmany():
             msg = self._convert_row_to_message(res.columns, row[0], stream)
+
+            if sync_mode == "incremental" and cursor_field:
+                cursor_value = msg.record.data.get(cursor_field[0])
+                if cursor_value:
+                    if max_cursor_value is None or cursor_value > max_cursor_value:
+                        max_cursor_value = cursor_value
+
             yield msg
+
+        if sync_mode == "incremental" and max_cursor_value is not None:
+            new_state = {cursor_field[0]: max_cursor_value}
+            yield AirbyteMessage(
+                type=Type.STATE,
+                state=AirbyteStateMessage(data=new_state),
+            )
 
     def _convert_row_to_message(self, columns: list[str], row: list[Any], stream: AirbyteStream) -> AirbyteMessage:
         """
