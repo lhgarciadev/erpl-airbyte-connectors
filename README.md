@@ -1,7 +1,7 @@
 <a name="top"></a>
 
 # Let your Airbyte talk to SAP!
-Disclaimer: This source connectors are currently in an experimental state. Feel free to try it out, but be aware that minimal testing and benchmarking were done.
+Disclaimer: These source connectors are currently in an experimental state. Feel free to try them out, but be aware that minimal testing and benchmarking were done.
 
 In this repository we use our [ERPL](https://erpl.io) and DuckDB to read data from SAP ERP, BW and other SAP ODP sources. We use the [Airbyte Python CDK](https://docs.airbyte.com/connector-development/cdk-python/) to make it easy to use the vast Airbyte ecosystem to move data out of SAP to various destinations, like BigQuery, Google Sheets, Excel, etc.
 

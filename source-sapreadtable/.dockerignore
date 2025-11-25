@@ -4,6 +4,7 @@
 !source_sapreadtable
 !main.py
 !pyproject.toml
+!uv.lock
 !README.md
 !integration_tests
 !secrets
