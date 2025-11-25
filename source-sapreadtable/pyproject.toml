@@ -25,8 +25,8 @@ Documentation = "https://docs.airbyte.com/integrations/sources/sapreadtable"
 Homepage = "https://airbyte.com"
 Repository = "https://github.com/airbytehq/airbyte"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
   "pytest>=7.0",
   "pytest-cov>=4.0",
   "requests-mock>=1.11",

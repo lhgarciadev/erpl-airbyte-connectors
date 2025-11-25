@@ -3,16 +3,13 @@
 #
 
 
-from abc import ABC
-from typing import Any, Dict, Generator, List, Mapping, Optional, Union
+import json
+import logging
+import time
+from collections.abc import Generator, Mapping
+from typing import Any
 
 import duckdb
-import json
-import time
-
-from functools import lru_cache
-
-from airbyte_cdk.logger import AirbyteLogger
 from airbyte_cdk.models import (
     AirbyteCatalog,
     AirbyteConnectionStatus,
@@ -21,14 +18,13 @@ from airbyte_cdk.models import (
     AirbyteStream,
     ConfiguredAirbyteCatalog,
     Status,
-    SyncMode,
-    Type
+    Type,
 )
 from airbyte_cdk.sources import Source
 
 
 class SourceRfcReadTable(Source):
-    def check(self, logger: AirbyteLogger, config: json) -> AirbyteConnectionStatus:
+    def check(self, logger: logging.Logger, config: json) -> AirbyteConnectionStatus:
         """
         :param config:  the user-input config object conforming to the connector's spec.yaml
         :param logger:  logger object
@@ -42,7 +38,7 @@ class SourceRfcReadTable(Source):
             message = str(e)
             return AirbyteConnectionStatus(status=Status.FAILED, message=f"ERPL connection test failed: {message}")
 
-    def discover(self, logger: AirbyteLogger, config: json) -> AirbyteCatalog:
+    def discover(self, logger: logging.Logger, config: json) -> AirbyteCatalog:
         """
         :param config: A Mapping of the user input configuration as defined in the connector spec.
         :param logger:  logger object
@@ -53,15 +49,17 @@ class SourceRfcReadTable(Source):
         # Create a connection with ERPL extension loaded
         con = self._create_connection_with_erpl(logger, config)
         res = con.sql(f"SELECT * FROM sap_show_tables(TABLENAME='{selection}') ORDER BY 1")
-        
+
         streams = []
         while row := res.fetchmany():
             stream = self._convert_row_to_stream(row[0], logger, config, con)
             streams.append(stream)
-        
+
         return AirbyteCatalog(streams=streams)
 
-    def _convert_row_to_stream(self, row: Mapping[str, Any], logger: AirbyteLogger, config: json, con: duckdb.DuckDBPyConnection) -> AirbyteStream:
+    def _convert_row_to_stream(
+        self, row: Mapping[str, Any], logger: logging.Logger, config: json, con: duckdb.DuckDBPyConnection
+    ) -> AirbyteStream:
         """
         Convert a row from the result of sap_show_tables into an AirbyteStream object.
         :param row: A row from the result of sap_show_tables
@@ -72,12 +70,18 @@ class SourceRfcReadTable(Source):
         """
         technical_name = row[0]
         text = row[1]
-        table_type = row[2] 
+        table_type = row[2]
 
         logger.debug("ERPL Source Stream Discovery - stream is: %s", technical_name)
         json_schema = self._create_json_schema_for_table(technical_name, con)
 
-        return AirbyteStream(name=technical_name, text=text, table_type=table_type, json_schema=json_schema, supported_sync_modes=["full_refresh"])
+        return AirbyteStream(
+            name=technical_name,
+            text=text,
+            table_type=table_type,
+            json_schema=json_schema,
+            supported_sync_modes=["full_refresh"],
+        )
 
     def _create_json_schema_for_table(self, table_name: str, con: duckdb.DuckDBPyConnection) -> Mapping[str, Any]:
         """
@@ -107,7 +111,7 @@ class SourceRfcReadTable(Source):
             "type": "object",
             "properties": properties,
         }
-    
+
     def _convert_erpl_field_type_to_json_schema_type(self, erpl_field_type: str) -> str:
         """
         Convert an ERPL field type to a JSON schema type.
@@ -139,15 +143,16 @@ class SourceRfcReadTable(Source):
             "STRG": "string",
             "SSTR": "string",
             "TIMS": "string",
-            "UNIT": "string"
+            "UNIT": "string",
         }
 
         if erpl_field_type in type_map:
             return type_map[erpl_field_type]
-        else:
-            raise ValueError(f"Unsupported ERPL field type: {erpl_field_type}")
+        raise ValueError(f"Unsupported ERPL field type: {erpl_field_type}")
 
-    def read(self, logger: AirbyteLogger, config: json, catalog: ConfiguredAirbyteCatalog, state: Dict[str, any]) -> Generator[AirbyteMessage, None, None]:
+    def read(
+        self, logger: logging.Logger, config: json, catalog: ConfiguredAirbyteCatalog, state: dict[str, any]
+    ) -> Generator[AirbyteMessage, None, None]:
         """
         :param config: A Mapping of the user input configuration as defined in the connector spec.
         :param catalog: The configured catalog.
@@ -161,9 +166,15 @@ class SourceRfcReadTable(Source):
             stream = configured_stream.stream
             for message in self._read_stream(logger, config, stream, con, state):
                 yield message
-        
 
-    def _read_stream(self, logger: AirbyteLogger, config: json, stream: AirbyteStream, con: duckdb.DuckDBPyConnection, state: Dict[str, any]) -> Generator[AirbyteMessage, None, None]:
+    def _read_stream(
+        self,
+        logger: logging.Logger,
+        config: json,
+        stream: AirbyteStream,
+        con: duckdb.DuckDBPyConnection,
+        state: dict[str, any],
+    ) -> Generator[AirbyteMessage, None, None]:
         """
         Read a stream from ERPL.
         :param logger: The logger object
@@ -174,13 +185,13 @@ class SourceRfcReadTable(Source):
         :return: A generator of AirbyteMessages
         """
         logger.debug("Starting ERPL Source read for stream: %s", stream.name)
-        
+
         res = con.sql(f"SELECT * FROM sap_read_table('{stream.name}')")
         while row := res.fetchmany():
             msg = self._convert_row_to_message(res.columns, row[0], stream)
             yield msg
-            
-    def _convert_row_to_message(self, columns: List[str], row: List[Any], stream: AirbyteStream) -> AirbyteMessage:
+
+    def _convert_row_to_message(self, columns: list[str], row: list[Any], stream: AirbyteStream) -> AirbyteMessage:
         """
         Convert a row from ERPL to an AirbyteMessage.
         :param row: The row to convert
@@ -188,11 +199,11 @@ class SourceRfcReadTable(Source):
         :return: An AirbyteMessage
         """
         data = {k: v for k, v in zip(columns, row)}
-        return AirbyteMessage(type=Type.RECORD, 
-                              record=AirbyteRecordMessage(stream=stream.name, data=data, emitted_at=int(time.time())))
+        return AirbyteMessage(
+            type=Type.RECORD, record=AirbyteRecordMessage(stream=stream.name, data=data, emitted_at=int(time.time()))
+        )
 
-
-    def _create_connection_with_erpl(self, logger: AirbyteLogger, config: json) -> duckdb.DuckDBPyConnection:
+    def _create_connection_with_erpl(self, logger: logging.Logger, config: json) -> duckdb.DuckDBPyConnection:
         """
         Create a connection with ERPL extension loaded.
         :param logger: The logger object
@@ -200,7 +211,7 @@ class SourceRfcReadTable(Source):
         :return: A connection with ERPL extension loaded
         """
         logger.info("Createing DuckDB connection with ERPL extension loaded ...")
-        
+
         custom_extension_repository = config["custom_extension_repository"]
         logger.debug("ERPL connection parameters: custom_extension_repository: %s", custom_extension_repository)
         sap_ashost = config["sap_ashost"]
@@ -215,14 +226,14 @@ class SourceRfcReadTable(Source):
         logger.debug("ERPL connection parameters: sap_client: %s", sap_client)
         sap_lang = config["sap_lang"]
         logger.debug("ERPL connection parameters: sap_lang: %s", sap_lang)
-        
+
         # Create a connection with ERPL extension loaded
         con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
         con.sql(f"SET custom_extension_repository = '{custom_extension_repository}';")
         con.install_extension(config["extension_name"])
         con.load_extension(config["extension_name"])
 
-        # Set ERPL connection parameters 
+        # Set ERPL connection parameters
         con.sql(f"""
             SET sap_ashost = '{sap_ashost}';
             SET sap_sysnr = '{sap_sysnr}';
