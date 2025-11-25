@@ -22,3 +22,4 @@ This project hosts Airbyte source connectors for SAP systems, leveraging the `er
 
 ## Recent Logs
 - **2025-11-24**: Migrated to `uv`, fixed `ruff` errors, established `planning/` directory.
+- **2025-11-25**: Fixed Airbyte stream construction (removed unsupported `description`, aligned with `SyncMode`, handled `state=None`). Check job now succeeds; discover pending re-test with network available.
