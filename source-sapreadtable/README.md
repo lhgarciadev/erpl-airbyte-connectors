@@ -36,6 +36,35 @@ uv run source-sapreadtable discover --config secrets/config.json
 uv run source-sapreadtable read --config secrets/config.json --catalog integration_tests/configured_catalog.json
 ```
 
+### Install ERPL extension locally (uv)
+
+```bash
+cd source-sapreadtable
+uv run python - <<'PY'
+import duckdb
+con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+con.sql("SET custom_extension_repository = 'http://get.erpl.io';")
+con.sql("FORCE INSTALL erpl;")
+con.sql("LOAD erpl;")
+PY
+```
+
+Validate RFC connectivity:
+```bash
+uv run source-sapreadtable check --config secrets/config.json
+# or directly
+uv run python - <<'PY'
+import duckdb
+con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+con.sql("SET custom_extension_repository='http://get.erpl.io';")
+con.sql("FORCE INSTALL erpl;")
+con.sql("LOAD erpl;")
+con.sql("PRAGMA sap_rfc_ping;")
+PY
+```
+
+More at the ERPL quickstart: https://erpl.io/docs/get_started/quickstart-erpl
+
 ### Running tests
 
 To run tests locally from the repo root:

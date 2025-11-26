@@ -12,6 +12,7 @@ In this repository we use our [ERPL](https://erpl.io) and DuckDB to read data fr
   - [★ What is the ERPL Extension?](#-what-is-the-erpl-extension)
   - [⚙ Example Usage](#-example-usage)
   - [➜ Obtaining the ERPL Airbyte Connectors](#-obtaining-the-erpl-airbyte-connectors)
+  - [ERPL local install & connectivity](#erpl-local-install--connectivity)
   - [💻 Configuring the ERPL Airbyte Connectors](#-configuring-the-erpl-airbyte-connectors)
     - [Step 1: Register the Connector](#step-1-register-the-connector)
     - [Step 2: Configure the Source](#step-2-configure-the-source)
@@ -75,6 +76,38 @@ Component | Code | Description | Gallery Link
 **SAP ODP Replication** | [`source-sapodp`](./source-sapreadtable/) | Reads data from ODP sources via the ERPL [ODP interface](https://erpl.io/docs/key_tasks/replicate_odp.html) | TODO
 
 Keep in mind that the development of the connectors are still in an experimental state. Feel free to try them out, but be aware that minimal testing and benchmarking were done. In case you have questions don't hesitate to reach out to us (e.g. via GitHub issues or via [other contact methods](https://erpl.io/contact.html)).
+
+[Back to Top](#top)
+
+## ERPL local install & connectivity
+
+Install ERPL locally (uses `uv`, allows unsigned extensions):
+```bash
+cd source-sapreadtable
+uv run python - <<'PY'
+import duckdb
+con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+con.sql("SET custom_extension_repository = 'http://get.erpl.io';")
+con.sql("FORCE INSTALL erpl;")
+con.sql("LOAD erpl;")
+PY
+```
+
+Validate RFC connectivity:
+```bash
+uv run source-sapreadtable check --config secrets/config.json
+# or directly
+uv run python - <<'PY'
+import duckdb
+con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
+con.sql("SET custom_extension_repository='http://get.erpl.io';")
+con.sql("FORCE INSTALL erpl;")
+con.sql("LOAD erpl;")
+con.sql("PRAGMA sap_rfc_ping;")
+PY
+```
+
+Quickstart reference: https://erpl.io/docs/get_started/quickstart-erpl
 
 [Back to Top](#top)
 

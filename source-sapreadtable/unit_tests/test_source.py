@@ -1,7 +1,14 @@
 import logging
 
 import pytest
-from airbyte_cdk.models import AirbyteStream, ConfiguredAirbyteCatalog, Status, SyncMode
+from airbyte_cdk.models import (
+    AirbyteStream,
+    ConfiguredAirbyteCatalog,
+    ConfiguredAirbyteStream,
+    DestinationSyncMode,
+    Status,
+    SyncMode,
+)
 
 from source_sapreadtable.source import SourceRfcReadTable
 
@@ -156,6 +163,100 @@ def test_read_stream_emits_state(logger: logging.Logger) -> None:
 
     assert messages[-1].type.value == "STATE"
     assert messages[-1].state.data == {"AEDAT": "2024-02-01"}
+
+
+def test_create_json_schema_for_table() -> None:
+    source = SourceRfcReadTable()
+
+    class DummyResult:
+        def fetchall(self):
+            return [
+                (1, "TABL", "FIELD1", "First Field", "CHAR", "10", "0"),
+                (2, "TABL", "FIELD2", "Amount", "DEC", "8", "2"),
+            ]
+
+    class DummyConnection:
+        def sql(self, query: str) -> DummyResult:
+            assert "sap_describe_fields('TABL')" in query
+            return DummyResult()
+
+    schema = source._create_json_schema_for_table("TABL", DummyConnection())
+
+    field1 = schema["properties"]["FIELD1"]
+    assert field1["type"] == "string"
+    assert field1["length"] == 10
+    assert field1["decimals"] == 0
+    assert field1["description"] == "First Field"
+
+    field2 = schema["properties"]["FIELD2"]
+    assert field2["type"] == "number"
+    assert field2["length"] == 8
+    assert field2["decimals"] == 2
+    assert field2["description"] == "Amount"
+
+
+def test_convert_erpl_field_type_to_json_schema_type_raises_on_unknown() -> None:
+    source = SourceRfcReadTable()
+    with pytest.raises(ValueError, match="Unsupported ERPL field type"):
+        source._convert_erpl_field_type_to_json_schema_type("UNSUPPORTED")
+
+
+def test_read_forwards_state_per_stream(logger: logging.Logger) -> None:
+    source = SourceRfcReadTable()
+
+    stream_a = AirbyteStream(name="A", json_schema={}, supported_sync_modes=[SyncMode.full_refresh])
+    stream_b = AirbyteStream(name="B", json_schema={}, supported_sync_modes=[SyncMode.full_refresh])
+    catalog = ConfiguredAirbyteCatalog(
+        streams=[
+            ConfiguredAirbyteStream(
+                stream=stream_a,
+                sync_mode=SyncMode.full_refresh,
+                cursor_field=[],
+                destination_sync_mode=DestinationSyncMode.overwrite,
+            ),
+            ConfiguredAirbyteStream(
+                stream=stream_b,
+                sync_mode=SyncMode.full_refresh,
+                cursor_field=[],
+                destination_sync_mode=DestinationSyncMode.overwrite,
+            ),
+        ]
+    )
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def fake_read_stream(
+        _logger: logging.Logger,
+        _config: dict[str, object],
+        stream: AirbyteStream,
+        _con: object,
+        state: dict[str, object],
+        _sync_mode: SyncMode,
+        _cursor_field: list[str],
+    ):
+        calls.append((stream.name, state))
+        return iter([])
+
+    source._create_connection_with_erpl = lambda _logger, _config: "CONN"  # type: ignore[method-assign]
+    source._read_stream = fake_read_stream  # type: ignore[method-assign]
+
+    state = {"A": {"since": "yesterday"}}
+    list(source.read(logger, {}, catalog, state))
+
+    assert calls == [("A", {"since": "yesterday"}), ("B", {})]
+
+
+@pytest.mark.parametrize(
+    ("secret", "expected"),
+    [
+        ("", ""),
+        ("abc", "***"),
+        ("abcd", "****"),
+        ("longsecret", "l***t"),
+    ],
+)
+def test_mask_secret(secret: str, expected: str) -> None:
+    assert SourceRfcReadTable._mask_secret(secret) == expected
 
 
 def test_connection_logging_sanitizes_credentials(
