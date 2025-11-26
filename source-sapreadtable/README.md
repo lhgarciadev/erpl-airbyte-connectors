@@ -25,6 +25,7 @@ make install
 Follow the instructions in the [documentation](https://docs.airbyte.com/integrations/sources/sapreadtable)
 to generate the necessary credentials. Then create a file `secrets/config.json` conforming to `source_sapreadtable/spec.yaml`.
 Directories named `secrets` are gitignored, so you won't commit sensitive info by mistake.
+You can start from the provided template at `example.config.json` and fill in your values.
 
 
 ### Locally running the connector

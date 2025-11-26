@@ -1,0 +1,11 @@
+{
+  "custom_extension_repository": "http://get.erpl.io",
+  "extension_name": "erpl",
+  "sap_ashost": "your-sap-host",
+  "sap_sysnr": "00",
+  "sap_user": "YOUR_USER",
+  "sap_password": "YOUR_PASSWORD",
+  "sap_client": "100",
+  "sap_lang": "EN",
+  "table_selection": "BKPF"
+}
