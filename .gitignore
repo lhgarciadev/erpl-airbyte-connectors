@@ -106,5 +106,5 @@ scan-journal.log
 # mvn
 target/
 
-
+.duckdb
 dev_rfc.log
