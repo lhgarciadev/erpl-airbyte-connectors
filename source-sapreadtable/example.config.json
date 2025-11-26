@@ -5,7 +5,7 @@
   "sap_sysnr": "00",
   "sap_user": "YOUR_USER",
   "sap_password": "YOUR_PASSWORD",
-  "sap_client": "100",
+  "sap_client": "500",
   "sap_lang": "EN",
   "table_selection": "BKPF"
 }

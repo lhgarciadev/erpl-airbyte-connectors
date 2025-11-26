@@ -108,3 +108,4 @@ target/
 
 .duckdb
 dev_rfc.log
+*.csv
