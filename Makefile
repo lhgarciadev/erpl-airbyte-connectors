@@ -39,6 +39,8 @@ format:
 	@echo "Formatting..."
 	@cd $(PROJECT_DIR) && $(UV) run ruff format .
 
+all: install format lint test
+
 clean:
 	@echo "Cleaning..."
 	@rm -rf $(PROJECT_DIR)/.venv

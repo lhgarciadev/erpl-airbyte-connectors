@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "source-sapreadtable"
-version = "0.1.0"
+version = "0.1.1"
 description = "Source implementation for reading data directly from SAP tables. Utilizing https://erpl.io."
 authors = [
   { name = "Airbyte", email = "contact@airbyte.io" },
@@ -13,8 +13,8 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-  "airbyte-cdk>=0",
-  "duckdb==0.10.1",
+  "airbyte-cdk==7.5.1",
+  "duckdb==0.10.2",
 ]
 
 [project.scripts]
@@ -49,6 +49,10 @@ ignore = ["B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["unit_tests", "integration_tests"]
+filterwarnings = [
+  "ignore:.*ExperimentalClassWarning.*:Warning",
+  "ignore:This class is experimental. Use at your own risk.:Warning",
+]
 
 [tool.mypy]
 python_version = "3.10"

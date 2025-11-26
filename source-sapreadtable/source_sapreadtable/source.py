@@ -18,8 +18,8 @@ from airbyte_cdk.models import (
     AirbyteStateMessage,
     AirbyteStream,
     ConfiguredAirbyteCatalog,
-    SyncMode,
     Status,
+    SyncMode,
     Type,
 )
 from airbyte_cdk.sources import Source
@@ -30,7 +30,7 @@ class SourceRfcReadTable(Source):
         """
         :param config:  the user-input config object conforming to the connector's spec.yaml
         :param logger:  logger object
-        :return AirbyteConnectionStatus: the connection status object, with status SUCCEEDED in case ping succeeded, FAILED otherwise.
+        :return AirbyteConnectionStatus: the connection status object. It succeeds when the ping works, fails otherwise.
         """
         con = self._create_connection_with_erpl(logger, config)
         try:
@@ -53,26 +53,26 @@ class SourceRfcReadTable(Source):
         res = con.sql(f"SELECT * FROM sap_show_tables(TABLENAME='{selection}') ORDER BY 1")
 
         streams = []
-        while row := res.fetchmany():
-            stream = self._convert_row_to_stream(row[0], logger, config, con)
-            streams.append(stream)
+        while batch := res.fetchmany():
+            for row in batch:
+                stream = self._convert_row_to_stream(row, logger, config, con)
+                streams.append(stream)
 
         return AirbyteCatalog(streams=streams)
 
     def _convert_row_to_stream(
-        self, row: Mapping[str, Any], logger: logging.Logger, config: json, con: duckdb.DuckDBPyConnection
+        self, row: Mapping[str, Any], logger: logging.Logger, _config: json, con: duckdb.DuckDBPyConnection
     ) -> AirbyteStream:
         """
         Convert a row from the result of sap_show_tables into an AirbyteStream object.
         :param row: A row from the result of sap_show_tables
         :param logger: The logger object
-        :param config: The user input configuration
         :param con: The connection to ERPL
         :return: An AirbyteStream object
         """
         technical_name = row[0]
-        text = row[1]
-        table_type = row[2]
+        _text = row[1]
+        _table_type = row[2]
 
         logger.debug("ERPL Source Stream Discovery - stream is: %s", technical_name)
         json_schema = self._create_json_schema_for_table(technical_name, con)
@@ -164,7 +164,11 @@ class SourceRfcReadTable(Source):
         raise ValueError(f"Unsupported ERPL field type: {erpl_field_type}")
 
     def read(
-        self, logger: logging.Logger, config: json, catalog: ConfiguredAirbyteCatalog, state: dict[str, Any] | None = None
+        self,
+        logger: logging.Logger,
+        config: json,
+        catalog: ConfiguredAirbyteCatalog,
+        state: dict[str, Any] | None = None,
     ) -> Generator[AirbyteMessage, None, None]:
         """
         :param config: A Mapping of the user input configuration as defined in the connector spec.
@@ -184,13 +188,12 @@ class SourceRfcReadTable(Source):
             # Get the stream state
             stream_state = safe_state.get(stream.name, {})
 
-            for message in self._read_stream(logger, config, stream, con, stream_state, sync_mode, cursor_field):
-                yield message
+            yield from self._read_stream(logger, config, stream, con, stream_state, sync_mode, cursor_field)
 
     def _read_stream(
         self,
         logger: logging.Logger,
-        config: json,
+        _config: json,
         stream: AirbyteStream,
         con: duckdb.DuckDBPyConnection,
         state: dict[str, Any],
@@ -227,16 +230,16 @@ class SourceRfcReadTable(Source):
 
         max_cursor_value = None
 
-        while row := res.fetchmany():
-            msg = self._convert_row_to_message(res.columns, row[0], stream)
+        while batch := res.fetchmany():
+            for row in batch:
+                msg = self._convert_row_to_message(res.columns, row, stream)
 
-            if sync_mode_value == "incremental" and cursor_field:
-                cursor_value = msg.record.data.get(cursor_field[0])
-                if cursor_value:
-                    if max_cursor_value is None or cursor_value > max_cursor_value:
+                if sync_mode_value == "incremental" and cursor_field:
+                    cursor_value = msg.record.data.get(cursor_field[0])
+                    if cursor_value and (max_cursor_value is None or cursor_value > max_cursor_value):
                         max_cursor_value = cursor_value
 
-            yield msg
+                yield msg
 
         if sync_mode_value == "incremental" and max_cursor_value is not None:
             new_state = {cursor_field[0]: max_cursor_value}
@@ -252,7 +255,7 @@ class SourceRfcReadTable(Source):
         :param stream: The stream to which the row belongs
         :return: An AirbyteMessage
         """
-        data = {k: v for k, v in zip(columns, row)}
+        data = dict(zip(columns, row, strict=False))
         return AirbyteMessage(
             type=Type.RECORD, record=AirbyteRecordMessage(stream=stream.name, data=data, emitted_at=int(time.time()))
         )
@@ -264,22 +267,26 @@ class SourceRfcReadTable(Source):
         :param config: The user input configuration
         :return: A connection with ERPL extension loaded
         """
-        logger.info("Createing DuckDB connection with ERPL extension loaded ...")
+        logger.info("Creating DuckDB connection with ERPL extension loaded ...")
 
         custom_extension_repository = config["custom_extension_repository"]
-        logger.debug("ERPL connection parameters: custom_extension_repository: %s", custom_extension_repository)
         sap_ashost = config["sap_ashost"]
-        logger.debug("ERPL connection parameters: sap_ashost: %s", sap_ashost)
         sap_sysnr = config["sap_sysnr"]
-        logger.debug("ERPL connection parameters: sap_sysnr: %s", sap_sysnr)
         sap_user = config["sap_user"]
-        logger.debug("ERPL connection parameters: sap_user (ends with): %s", sap_user[-1])
         sap_password = config["sap_password"]
-        logger.debug("ERPL connection parameters: sap_password (ends with): %s", sap_password[-1])
         sap_client = config["sap_client"]
-        logger.debug("ERPL connection parameters: sap_client: %s", sap_client)
         sap_lang = config["sap_lang"]
-        logger.debug("ERPL connection parameters: sap_lang: %s", sap_lang)
+
+        safe_config = {
+            "custom_extension_repository": custom_extension_repository,
+            "sap_ashost": sap_ashost,
+            "sap_sysnr": sap_sysnr,
+            "sap_user": self._mask_secret(sap_user),
+            "sap_password": self._mask_secret(sap_password),
+            "sap_client": sap_client,
+            "sap_lang": sap_lang,
+        }
+        logger.debug("ERPL connection parameters (sanitized): %s", safe_config)
 
         # Create a connection with ERPL extension loaded
         con = duckdb.connect(config={"allow_unsigned_extensions": "true"})
@@ -298,3 +305,12 @@ class SourceRfcReadTable(Source):
         """)
 
         return con
+
+    @staticmethod
+    def _mask_secret(secret: str) -> str:
+        """Return a masked representation of a secret to avoid leaking credentials in logs."""
+        if not secret:
+            return ""
+        if len(secret) <= 4:
+            return "*" * len(secret)
+        return f"{secret[0]}***{secret[-1]}"
