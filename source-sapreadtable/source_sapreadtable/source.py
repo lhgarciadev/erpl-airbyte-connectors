@@ -219,13 +219,25 @@ class SourceRfcReadTable(Source):
             cursor_field,
         )
 
-        query = f"SELECT * FROM sap_read_table('{stream.name}')"
+        # Build the Pushdown Filter for SAP OpenSQL
+        # This prevents "Conversion Error" and "SAPSQL_DATA_LOSS" by filtering at the source
+        filter_option = ""
+        if sync_mode_value == "incremental" and cursor_field:
+            cursor_name = cursor_field[0]
+            # state is the inner state for this stream, e.g. {"AEDAT": "20240101"}
+            last_state_value = state.get(cursor_name)
 
-        if sync_mode_value == "incremental" and cursor_field and state.get(cursor_field[0]):
-            last_state_value = state[cursor_field[0]]
-            query += f" WHERE {cursor_field[0]} >= '{last_state_value}'"
-            logger.info(f"Reading incrementally for {stream.name} with state: {state}")
+            if last_state_value:
+                # Sanitize the value for SQL literal inclusion
+                safe_value = str(last_state_value).replace("'", "''")
+                
+                # OpenSQL Syntax: FIELD GE 'VALUE'
+                # DuckDB requires doubled single quotes for literals inside the string
+                filter_option = f", FILTER='{cursor_name} GE ''{safe_value}'''"
+                
+                logger.info(f"Reading incrementally for {stream.name} with filter: {filter_option}")
 
+        query = f"SELECT * FROM sap_read_table('{stream.name}'{filter_option})"
         res = con.sql(query)
 
         max_cursor_value = None
@@ -242,10 +254,14 @@ class SourceRfcReadTable(Source):
                 yield msg
 
         if sync_mode_value == "incremental" and max_cursor_value is not None:
-            new_state = {cursor_field[0]: max_cursor_value}
+            # Update state structure to be nested under stream name
+            # This ensures the 'read' method can correctly retrieve it in subsequent runs
+            new_stream_state = {cursor_field[0]: max_cursor_value}
+            new_global_state = {stream.name: new_stream_state}
+            
             yield AirbyteMessage(
                 type=Type.STATE,
-                state=AirbyteStateMessage(data=new_state),
+                state=AirbyteStateMessage(data=new_global_state),
             )
 
     def _convert_row_to_message(self, columns: list[str], row: list[Any], stream: AirbyteStream) -> AirbyteMessage:
